@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RSA Encrypt/Decrypt Demo (Web Crypto)</title>
+  <style>
+    :root { --bg:#0f172a; --card:#111826; --text:#e6e8ee; --muted:#94a3b8; --accent:#38bdf8; --ok:#22c55e; --err:#ef4444; }
+    *{box-sizing:border-box}
+    body{margin:0;font:16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial; background:var(--bg); color:var(--text)}
+    header{padding:24px 16px;text-align:center;border-bottom:1px solid #233047}
+    h1{margin:0;font-size:clamp(20px,2.5vw,28px)}
+    main{max-width:1100px;margin:0 auto;padding:20px;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+    .card{background:var(--card);border:1px solid #22314b;border-radius:16px;padding:16px;box-shadow:0 2px 12px rgba(0,0,0,.25)}
+    .row{display:flex;gap:8px;flex-wrap:wrap}
+    label{display:block;margin:8px 0 6px;color:var(--muted);font-weight:600}
+    textarea, input{width:100%;padding:10px;border-radius:10px;border:1px solid #2a3a59;background:#0b1220;color:var(--text);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace}
+    textarea{min-height:140px;resize:vertical}
+    button{cursor:pointer;border:none;border-radius:999px;padding:10px 14px;font-weight:700;color:#03111b;background:var(--accent);transition:.2s}
+    button.secondary{background:#1f2937;color:#cbd5e1;border:1px solid #2a3a59}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .pill{display:inline-flex;gap:8px;align-items:center;padding:6px 10px;border-radius:999px;background:#0b1220;border:1px solid #2a3a59;color:#cbd5e1;font-size:12px}
+    .muted{color:var(--muted)}
+    .grid-2{display:grid;gap:12px;grid-template-columns:1fr 1fr}
+    .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace}
+    .small{font-size:12px}
+    .status{min-height:24px}
+    .ok{color:var(--ok)}
+    .err{color:var(--err)}
+    details{border:1px dashed #2a3a59;border-radius:12px;padding:10px}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🔐 RSA Encrypt/Decrypt (Hybrid RSA‑OAEP + AES‑GCM) — Web Crypto</h1>
+    <p class="muted">Generate a key pair, share your <strong>public</strong> key to encrypt. Keep your <strong>private</strong> key secret to decrypt.</p>
+  </header>
+
+  <main>
+    <!-- Keys Panel -->
+    <section class="card" id="keysCard">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h2 style="margin:0">Keys</h2>
+        <span class="pill"><span id="algoPill">RSA‑OAEP / SHA‑256 · 2048‑bit</span></span>
+      </div>
+
+      <div class="row" style="gap:10px;margin-top:8px">
+        <button id="btnGen">Generate Key Pair</button>
+        <button id="btnDownload" class="secondary" disabled>Download Keys</button>
+        <button id="btnClearKeys" class="secondary">Clear</button>
+      </div>
+
+      <label for="pubPem">Public Key (PEM, shareable)</label>
+      <textarea id="pubPem" placeholder="-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"></textarea>
+
+      <label for="privPem">Private Key (PEM, keep secret)</label>
+      <textarea id="privPem" placeholder="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"></textarea>
+
+      <div class="status small" id="keysStatus"></div>
+
+      <details>
+        <summary>What’s happening here?</summary>
+        <ul class="small">
+          <li>Keys are created with <code>window.crypto.subtle.generateKey</code> using RSA‑OAEP (SHA‑256, modulus 2048, e=65537).</li>
+          <li>We export the public key (SPKI) and private key (PKCS#8) to PEM for copy/paste or storage.</li>
+          <li>PEM text in the boxes can be imported later on any device to encrypt/decrypt.</li>
+        </ul>
+      </details>
+    </section>
+
+    <!-- Encrypt Panel -->
+    <section class="card" id="encCard">
+      <h2 style="margin-top:0">Encrypt</h2>
+      <label for="plain">Plaintext</label>
+      <textarea id="plain" placeholder="Type a message to encrypt..."></textarea>
+
+      <div class="row">
+        <button id="btnEncrypt">Encrypt with Public Key</button>
+      </div>
+
+      <label for="cipher">Ciphertext (JSON: RSA‑wrapped AES key + IV + ciphertext)</label>
+      <textarea id="cipher" placeholder='{"rsaWrappedKey":"...","iv":"...","ciphertext":"..."}'></textarea>
+
+      <div class="status small" id="encStatus"></div>
+
+      <details>
+        <summary>Why JSON? Why AES‑GCM?</summary>
+        <ul class="small">
+          <li>RSA is used to encrypt only a short random AES key ("envelope encryption").</li>
+          <li>The actual message is encrypted with AES‑GCM (fast, supports arbitrary length).</li>
+          <li>The JSON bundle contains: Base64URL( RSA‑OAEP(AES key) ), the AES IV, and the AES ciphertext tag+data.</li>
+        </ul>
+      </details>
+    </section>
+
+    <!-- Decrypt Panel -->
+    <section class="card" id="decCard">
+      <h2 style="margin-top:0">Decrypt</h2>
+      <label for="cipherIn">Ciphertext JSON</label>
+      <textarea id="cipherIn" placeholder='Paste the JSON produced above...'></textarea>
+
+      <div class="row">
+        <button id="btnDecrypt">Decrypt with Private Key</button>
+      </div>
+
+      <label for="plainOut">Decrypted Plaintext</label>
+      <textarea id="plainOut" placeholder="Decrypted text will appear here..."></textarea>
+
+      <div class="status small" id="decStatus"></div>
+    </section>
+
+    <!-- Tips -->
+    <section class="card">
+      <h2 style="margin-top:0">Notes & Tips</h2>
+      <ul class="small">
+        <li><strong>Security:</strong> This is a client‑side demo. In production, protect your private key with passphrase encryption and secure storage.</li>
+        <li><strong>Interoperability:</strong> PEM exports should import into most libraries (Node.js crypto, OpenSSL, Go, Python cryptography) as SPKI/PKCS8.</li>
+        <li><strong>Limits:</strong> Raw RSA has size limits; that’s why we use a hybrid scheme (RSA‑OAEP wraps AES‑GCM key).</li>
+        <li><strong>Hash/Modulus:</strong> You can change RSA modulusLength to 3072/4096 and hash to SHA‑256/384 depending on needs.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script>
+    // ===== Helpers: Base64URL <-> ArrayBuffer =====
+    const ab2b64url = (ab) => {
+      const b = String.fromCharCode(...new Uint8Array(ab));
+      const b64 = btoa(b);
+      return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+    };
+    const b64url2ab = (s) => {
+      s = s.replace(/-/g,'+').replace(/_/g,'/');
+      const pad = s.length % 4 ? 4 - (s.length % 4) : 0;
+      s += '='.repeat(pad);
+      const b = atob(s);
+      const u8 = new Uint8Array(b.length);
+      for (let i=0;i<b.length;i++) u8[i] = b.charCodeAt(i);
+      return u8.buffer;
+    };
+
+    // ===== Helpers: PEM <-> ArrayBuffer =====
+    const pemToArrayBuffer = (pem) => {
+      const lines = pem.trim().split(/\r?\n/);
+      const body = lines.filter(l => !l.startsWith('-----')).join('');
+      const bin = atob(body);
+      const u8 = new Uint8Array(bin.length);
+      for (let i=0;i<bin.length;i++) u8[i] = bin.charCodeAt(i);
+      return u8.buffer;
+    };
+    const arrayBufferToPem = (ab, label) => {
+      const b64 = btoa(String.fromCharCode(...new Uint8Array(ab)));
+      const chunks = b64.match(/.{1,64}/g).join('\n');
+      return `-----BEGIN ${label}-----\n${chunks}\n-----END ${label}-----`;
+    };
+
+    // ===== Web Crypto Params =====
+    const RSA_PARAMS = { name: 'RSA-OAEP', modulusLength: 2048, publicExponent: new Uint8Array([0x01,0x00,0x01]), hash: 'SHA-256' };
+    const AES_PARAMS = { name: 'AES-GCM', length: 256 };
+
+    // ===== UI Elements =====
+    const pubPemEl = document.getElementById('pubPem');
+    const privPemEl = document.getElementById('privPem');
+    const keysStatus = document.getElementById('keysStatus');
+
+    const plainEl = document.getElementById('plain');
+    const cipherEl = document.getElementById('cipher');
+    const encStatus = document.getElementById('encStatus');
+
+    const cipherInEl = document.getElementById('cipherIn');
+    const plainOutEl = document.getElementById('plainOut');
+    const decStatus = document.getElementById('decStatus');
+
+    const btnGen = document.getElementById('btnGen');
+    const btnDownload = document.getElementById('btnDownload');
+    const btnClearKeys = document.getElementById('btnClearKeys');
+    const btnEncrypt = document.getElementById('btnEncrypt');
+    const btnDecrypt = document.getElementById('btnDecrypt');
+
+    let publicKey, privateKey; // CryptoKey objects
+
+    // ===== Key Generation =====
+    btnGen.addEventListener('click', async () => {
+      try {
+        keysStatus.textContent = 'Generating…';
+        const keyPair = await crypto.subtle.generateKey(
+          RSA_PARAMS,
+          true, // extractable (so we can export PEM)
+          ['encrypt', 'decrypt']
+        );
+        publicKey = keyPair.publicKey;
+        privateKey = keyPair.privateKey;
+
+        const spki = await crypto.subtle.exportKey('spki', publicKey);
+        const pkcs8 = await crypto.subtle.exportKey('pkcs8', privateKey);
+        pubPemEl.value = arrayBufferToPem(spki, 'PUBLIC KEY');
+        privPemEl.value = arrayBufferToPem(pkcs8, 'PRIVATE KEY');
+        keysStatus.innerHTML = '<span class="ok">Key pair generated ✔</span>';
+        btnDownload.disabled = false;
+      } catch (e) {
+        console.error(e);
+        keysStatus.innerHTML = `<span class="err">Error: ${e.message}</span>`;
+      }
+    });
+
+    // ===== Download Keys =====
+    btnDownload.addEventListener('click', () => {
+      const download = (filename, text) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([text], {type:'text/plain'}));
+        a.download = filename; a.click(); URL.revokeObjectURL(a.href);
+      };
+      if (pubPemEl.value) download('public_key.pem', pubPemEl.value);
+      if (privPemEl.value) download('private_key.pem', privPemEl.value);
+    });
+
+    // ===== Clear Keys =====
+    btnClearKeys.addEventListener('click', () => {
+      publicKey = privateKey = undefined;
+      pubPemEl.value = privPemEl.value = '';
+      btnDownload.disabled = true;
+      keysStatus.textContent = '';
+    });
+
+    // ===== Import PEM to CryptoKey =====
+    const importPublicKeyFromPem = async (pem) => {
+      const spki = pemToArrayBuffer(pem);
+      return crypto.subtle.importKey('spki', spki, RSA_PARAMS, true, ['encrypt']);
+    };
+    const importPrivateKeyFromPem = async (pem) => {
+      const pkcs8 = pemToArrayBuffer(pem);
+      return crypto.subtle.importKey('pkcs8', pkcs8, RSA_PARAMS, true, ['decrypt']);
+    };
+
+    // ===== Encrypt (Hybrid) =====
+    btnEncrypt.addEventListener('click', async () => {
+      try {
+        encStatus.textContent = '';
+        const message = plainEl.value;
+        if (!message) { encStatus.innerHTML = '<span class="err">Enter plaintext.</span>'; return; }
+        // Ensure public key
+        if (!publicKey && pubPemEl.value.trim()) {
+          publicKey = await importPublicKeyFromPem(pubPemEl.value.trim());
+        }
+        if (!publicKey) { encStatus.innerHTML = '<span class="err">No public key available.</span>'; return; }
+
+        // 1) Create AES key & IV
+        const aesKey = await crypto.subtle.generateKey(AES_PARAMS, true, ['encrypt','decrypt']);
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+
+        // 2) Encrypt plaintext with AES‑GCM
+        const pt = new TextEncoder().encode(message);
+        const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv}, aesKey, pt);
+
+        // 3) Export AES raw key and wrap it with RSA‑OAEP
+        const rawAes = await crypto.subtle.exportKey('raw', aesKey);
+        const wrapped = await crypto.subtle.encrypt({name:'RSA-OAEP'}, publicKey, rawAes);
+
+        // 4) Bundle JSON
+        const bundle = {
+          rsaWrappedKey: ab2b64url(wrapped),
+          iv: ab2b64url(iv.buffer),
+          ciphertext: ab2b64url(ct)
+        };
+        cipherEl.value = JSON.stringify(bundle);
+        encStatus.innerHTML = '<span class="ok">Encrypted ✔</span>';
+        // for convenience, also mirror to decrypt input
+        cipherInEl.value = cipherEl.value;
+      } catch (e) {
+        console.error(e);
+        encStatus.innerHTML = `<span class="err">Error: ${e.message}</span>`;
+      }
+    });
+
+    // ===== Decrypt (Hybrid) =====
+    btnDecrypt.addEventListener('click', async () => {
+      try {
+        decStatus.textContent = '';
+        const json = cipherInEl.value.trim();
+        if (!json) { decStatus.innerHTML = '<span class="err">Paste ciphertext JSON.</span>'; return; }
+        // Ensure private key
+        if (!privateKey && privPemEl.value.trim()) {
+          privateKey = await importPrivateKeyFromPem(privPemEl.value.trim());
+        }
+        if (!privateKey) { decStatus.innerHTML = '<span class="err">No private key available.</span>'; return; }
+
+        const bundle = JSON.parse(json);
+        const wrapped = b64url2ab(bundle.rsaWrappedKey);
+        const iv = new Uint8Array(b64url2ab(bundle.iv));
+        const ct = b64url2ab(bundle.ciphertext);
+
+        // 1) Unwrap AES key with RSA‑OAEP
+        const rawAes = await crypto.subtle.decrypt({name:'RSA-OAEP'}, privateKey, wrapped);
+        const aesKey = await crypto.subtle.importKey('raw', rawAes, AES_PARAMS, false, ['decrypt']);
+
+        // 2) Decrypt with AES‑GCM
+        const pt = await crypto.subtle.decrypt({name:'AES-GCM', iv}, aesKey, ct);
+        const text = new TextDecoder().decode(pt);
+        plainOutEl.value = text;
+        decStatus.innerHTML = '<span class="ok">Decrypted ✔</span>';
+      } catch (e) {
+        console.error(e);
+        decStatus.innerHTML = `<span class="err">Error: ${e.message}</span>`;
+      }
+    });
+  </script>
+</body>
+</html>
