@@ -37,7 +37,7 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- Spring Boot Test (optional) -->
+        <!-- Spring Boot Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

@@ -1,69 +1,110 @@
 package com.example.rsa.service;
 
-import java.security.*;
-import javax.crypto.Cipher;
-import java.util.Base64;
-
 import org.springframework.stereotype.Service;
+
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.security.*;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.Base64;
+import java.util.Map;
 
 @Service
 public class RSAService {
+
     private KeyPair keyPair;
-    // private final Cipher cipher;
+    private static final int AES_KEY_SIZE = 128;
+    private static final int GCM_TAG_LENGTH = 128;
+    private static final int GCM_IV_LENGTH = 12;
 
     public RSAService() {
+        generateKeys();
+    }
+
+    public synchronized void generateKeys() {
         try {
-            generateKeys(); // <-- Automatically generate keys at startup
+            KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
+            gen.initialize(2048, new SecureRandom());
+            this.keyPair = gen.generateKeyPair();
         } catch (Exception e) {
-            e.printStackTrace();
+            throw new RuntimeException("Unable to generate RSA keys", e);
         }
     }
 
-    // Generate a new RSA key pair
-    public void generateKeys() throws NoSuchAlgorithmException {
-        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-        generator.initialize(2048);
-        keyPair = generator.generateKeyPair();
-        System.out.println("🔑 RSA key pair generated successfully."); // <-- Added debug print
-    }
-
-    // Return the public and private keys as Base64 strings
-    public String[] getKeys() {
-        if (keyPair == null) return new String[]{"No keys generated", "No keys generated"};
-        String pub = Base64.getEncoder().encodeToString(keyPair.getPublic().getEncoded());
-        String priv = Base64.getEncoder().encodeToString(keyPair.getPrivate().getEncoded());
-        return new String[]{pub, priv};
-    }
-
-    public String getPublicKey() {
+    public String getPublicKeyBase64() {
         return Base64.getEncoder().encodeToString(keyPair.getPublic().getEncoded());
     }
 
-    public String getPrivateKey() {
+    public String getPrivateKeyBase64() {
         return Base64.getEncoder().encodeToString(keyPair.getPrivate().getEncoded());
     }
 
+    // ==========================
+    // 🔒 AES + RSA HYBRID LOGIC
+    // ==========================
+    public Map<String, String> hybridEncrypt(String plainText) throws Exception {
+        // Generate AES key
+        KeyGenerator keyGen = KeyGenerator.getInstance("AES");
+        keyGen.init(AES_KEY_SIZE);
+        SecretKey aesKey = keyGen.generateKey();
+
+        // Encrypt plaintext with AES-GCM
+        byte[] iv = new byte[GCM_IV_LENGTH];
+        new SecureRandom().nextBytes(iv);
+        Cipher aesCipher = Cipher.getInstance("AES/GCM/NoPadding");
+        GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, iv);
+        aesCipher.init(Cipher.ENCRYPT_MODE, aesKey, spec);
+        byte[] cipherBytes = aesCipher.doFinal(plainText.getBytes(StandardCharsets.UTF_8));
+
+        // Encrypt AES key with RSA
+        Cipher rsaCipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+        rsaCipher.init(Cipher.ENCRYPT_MODE, keyPair.getPublic());
+        byte[] encKey = rsaCipher.doFinal(aesKey.getEncoded());
+
+        return Map.of(
+                "encryptedKey", Base64.getEncoder().encodeToString(encKey),
+                "iv", Base64.getEncoder().encodeToString(iv),
+                "cipherText", Base64.getEncoder().encodeToString(cipherBytes)
+        );
+    }
+
+    public String hybridDecrypt(String encKeyB64, String ivB64, String cipherB64) throws Exception {
+        // Decrypt AES key
+        Cipher rsaCipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+        rsaCipher.init(Cipher.DECRYPT_MODE, keyPair.getPrivate());
+        byte[] aesKeyBytes = rsaCipher.doFinal(Base64.getDecoder().decode(encKeyB64));
+        SecretKey aesKey = new SecretKeySpec(aesKeyBytes, "AES");
+
+        // Decrypt message
+        byte[] iv = Base64.getDecoder().decode(ivB64);
+        Cipher aesCipher = Cipher.getInstance("AES/GCM/NoPadding");
+        GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, iv);
+        aesCipher.init(Cipher.DECRYPT_MODE, aesKey, spec);
+        byte[] plain = aesCipher.doFinal(Base64.getDecoder().decode(cipherB64));
+
+        return new String(plain, StandardCharsets.UTF_8);
+    }
+
+    // ==========================
+    // 🧱 (Still supports direct RSA)
+    // ==========================
     public String encrypt(String plainText) throws Exception {
-        try {
-            Cipher cipher = Cipher.getInstance("RSA");
-            cipher.init(Cipher.ENCRYPT_MODE, keyPair.getPublic());
-            byte[] encryptedBytes = cipher.doFinal(plainText.getBytes());
-            return Base64.getEncoder().encodeToString(encryptedBytes);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return "Encryption failed: " + e.getMessage();
-        }
+        Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+        cipher.init(Cipher.ENCRYPT_MODE, keyPair.getPublic());
+        byte[] out = cipher.doFinal(plainText.getBytes(StandardCharsets.UTF_8));
+        return Base64.getEncoder().encodeToString(out);
     }
 
     public String decrypt(String cipherText) throws Exception {
-        try {
-            Cipher cipher = Cipher.getInstance("RSA");
-            cipher.init(Cipher.DECRYPT_MODE, keyPair.getPrivate());
-            byte[] decryptedBytes = cipher.doFinal(Base64.getDecoder().decode(cipherText));
-            return new String(decryptedBytes);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return "Decryption failed: " + e.getMessage();
-        }
+        Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+        cipher.init(Cipher.DECRYPT_MODE, keyPair.getPrivate());
+        byte[] decoded = Base64.getDecoder().decode(cipherText);
+        byte[] out = cipher.doFinal(decoded);
+        return new String(out, StandardCharsets.UTF_8);
     }
 }
